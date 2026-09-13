@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Онлайн-дневник школы</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f3f6fa;color:#172033}
+header{background:#1f4b99;color:white;padding:18px 22px;font-size:22px;font-weight:bold}
+.container{max-width:1050px;margin:30px auto;padding:0 15px}
+.card{background:white;border-radius:14px;padding:22px;margin-bottom:18px;box-shadow:0 4px 18px #00000010}
+input,select,button{padding:11px;border:1px solid #ccd4e0;border-radius:8px;font-size:15px}
+input,select{width:100%;margin:6px 0 12px}button{background:#1f4b99;color:white;border:0;cursor:pointer;margin:3px}button:hover{opacity:.9}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
+.stat{font-size:30px;font-weight:bold}.muted{color:#667085}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #eee;text-align:left}
+.hidden{display:none}.error{color:#b42318;margin-top:10px}.success{color:#067647}
+</style>
+</head>
+<body>
+<header>🏫 Онлайн-дневник школы</header>
+<div class="container">
+
+<div id="loginBox" class="card">
+<h2>Вход</h2>
+<label>Email</label><input id="email" value="director@school.tj">
+<label>Пароль</label><input id="password" type="password" value="123456">
+<button onclick="doLogin()">Войти</button>
+<div id="loginMsg"></div>
+</div>
+
+<div id="app" class="hidden">
+<div class="card">
+<h2 id="welcome"></h2><button onclick="logout()">Выйти</button>
+</div>
+
+<div id="director" class="hidden">
+<div id="stats" class="grid"></div>
+
+<div class="card">
+<h3>Добавить класс</h3>
+<input id="className" placeholder="Например: 7-А">
+<button onclick="addClass()">Добавить</button>
+</div>
+
+<div class="card">
+<h3>Добавить учителя</h3>
+<input id="teacherName" placeholder="ФИО">
+<input id="teacherEmail" placeholder="Email">
+<input id="teacherPassword" placeholder="Пароль" value="123456">
+<button onclick="addTeacher()">Добавить</button>
+</div>
+
+<div class="card">
+<h3>Добавить предмет</h3>
+<input id="subjectName" placeholder="Например: Математика">
+<button onclick="addSubject()">Добавить предмет</button>
+</div>
+
+<div class="card">
+<h3>Назначить учителя</h3>
+<select id="assignTeacher"></select>
+<select id="assignSubject"></select>
+<select id="assignClass"></select>
+<button onclick="assignTeacher()">Назначить</button>
+</div>
+
+<div class="card">
+<h3>Добавить ученика</h3>
+<input id="studentName" placeholder="ФИО">
+<input id="studentEmail" placeholder="Email">
+<input id="studentPassword" placeholder="Пароль" value="123456">
+<select id="studentClass"></select>
+<button onclick="addStudent()">Добавить</button>
+</div>
+
+<div class="card">
+<h3>Ученики</h3><div id="students"></div>
+</div>
+</div>
+
+<div id="teacher" class="hidden">
+<div class="card"><h3>Мои классы</h3><div id="teacherClasses"></div></div>
+<div class="card">
+<h3>Поставить оценку</h3>
+<input id="gradeStudentId" type="hidden">
+<input id="gradeClassId" type="hidden">
+<input id="gradeSubjectId" type="hidden">
+<select id="gradeStudent"></select>
+<select id="gradeValue"><option>5</option><option>4</option><option>3</option><option>2</option><option>1</option></select>
+<input id="gradeComment" placeholder="Комментарий (необязательно)">
+<button onclick="saveGrade()">Сохранить оценку</button>
+</div>
+</div>
+
+<div id="student" class="hidden">
+<div class="card"><h3>Мои результаты</h3><div id="studentStats"></div></div>
+<div class="card"><div id="myGrades"></div></div>
+</div>
+</div>
+</div>
+
+<script>
+const API='/api';
+let token=localStorage.getItem('token'), me=null;
+const $=id=>document.getElementById(id);
+
+async function api(path,options={}){
+  options.headers={...(options.headers||{}),'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})};
+  const r=await fetch(API+path,options), data=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(data.error||'Ошибка');
+  return data;
+}
+async function doLogin(){
+  try{
+    const d=await api('/auth/login',{method:'POST',body:JSON.stringify({email:$('email').value,password:$('password').value})});
+    token=d.token;localStorage.setItem('token',token);await start();
+  }catch(e){$('loginMsg').className='error';$('loginMsg').textContent=e.message}
+}
+function logout(){localStorage.removeItem('token');location.reload()}
+async function start(){
+  if(!token)return;
+  try{me=await api('/me')}catch(e){logout();return}
+  $('loginBox').classList.add('hidden');$('app').classList.remove('hidden');$('welcome').textContent='Добро пожаловать, '+me.full_name;
+  $(me.role).classList.remove('hidden');
+  if(me.role==='director')loadDirector();
+  if(me.role==='teacher')loadTeacher();
+  if(me.role==='student')loadStudent();
+}
+async function loadDirector(){
+  try{
+    const s=await api('/director/statistics');
+    $('stats').innerHTML=Object.entries(s).map(([k,v])=>`<div class="card"><div class="stat">${v}</div><div class="muted">${({students:'Учеников',teachers:'Учителей',classes:'Классов',subjects:'Предметов'})[k]}</div></div>`).join('');
+    const [cs,ts,subs,st]=await Promise.all([api('/classes'),api('/teachers'),api('/subjects'),api('/students')]);
+    $('studentClass').innerHTML=cs.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+    $('assignTeacher').innerHTML=ts.map(t=>`<option value="${t.id}">${t.full_name}</option>`).join('');
+    $('assignSubject').innerHTML=subs.map(x=>`<option value="${x.id}">${x.name}</option>`).join('');
+    $('assignClass').innerHTML=cs.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+    $('students').innerHTML='<table><tr><th>ФИО</th><th>Класс</th><th>Email</th></tr>'+st.map(x=>`<tr><td>${x.full_name}</td><td>${x.class_name}</td><td>${x.email}</td></tr>`).join('')+'</table>';
+  }catch(e){alert(e.message)}
+}
+async function addClass(){try{await api('/classes',{method:'POST',body:JSON.stringify({name:$('className').value})});$('className').value='';loadDirector()}catch(e){alert(e.message)}}
+async function addTeacher(){try{await api('/teachers',{method:'POST',body:JSON.stringify({name:$('teacherName').value,email:$('teacherEmail').value,password:$('teacherPassword').value})});$('teacherName').value='';$('teacherEmail').value='';loadDirector()}catch(e){alert(e.message)}}
+async function addSubject(){try{await api('/subjects',{method:'POST',body:JSON.stringify({name:$('subjectName').value})});$('subjectName').value='';loadDirector()}catch(e){alert(e.message)}}
+async function assignTeacher(){try{await api('/assignments',{method:'POST',body:JSON.stringify({teacherId:$('assignTeacher').value,subjectId:$('assignSubject').value,classId:$('assignClass').value})});alert('Учитель назначен!')}catch(e){alert(e.message)}}
+async function addStudent(){try{await api('/students',{method:'POST',body:JSON.stringify({name:$('studentName').value,email:$('studentEmail').value,password:$('studentPassword').value,classId:$('studentClass').value})});$('studentName').value='';$('studentEmail').value='';loadDirector()}catch(e){alert(e.message)}}
+async function loadTeacher(){
+  try{
+    const cs=await api('/teacher/classes');
+    $('teacherClasses').innerHTML=cs.length?cs.map(c=>`<button onclick="selectClass('${c.id}','${c.subject_id}','${c.name}','${c.subject_name}')">${c.name} — ${c.subject_name}</button> `).join(''):'Пока нет назначенных классов.';
+  }catch(e){alert(e.message)}
+}
+async function selectClass(cid,sid){
+  $('gradeClassId').value=cid;$('gradeSubjectId').value=sid;
+  const st=await api('/teacher/students/'+cid);
+  $('gradeStudent').innerHTML=st.map(x=>`<option value="${x.id}">${x.full_name}</option>`).join('');
+}
+async function saveGrade(){
+  try{await api('/grades',{method:'POST',body:JSON.stringify({studentId:$('gradeStudent').value,classId:$('gradeClassId').value,subjectId:$('gradeSubjectId').value,grade:Number($('gradeValue').value),comment:$('gradeComment').value})});$('gradeComment').value='';alert('Оценка сохранена!')}catch(e){alert(e.message)}
+}
+async function loadStudent(){
+  try{
+    const s=await api('/student/statistics');$('studentStats').innerHTML=`Средний балл: <b>${s.average}</b> · Оценок: <b>${s.total}</b>`;
+    const g=await api('/student/grades');
+    $('myGrades').innerHTML='<table><tr><th>Предмет</th><th>Оценка</th><th>Дата</th><th>Комментарий</th></tr>'+g.map(x=>`<tr><td>${x.subject_name}</td><td><b>${x.grade}</b></td><td>${new Date(x.grade_date).toLocaleDateString('ru-RU')}</td><td>${x.comment||''}</td></tr>`).join('')+'</table>';
+  }catch(e){alert(e.message)}
+}
+start();
+</script>
+</body>
+</html>
